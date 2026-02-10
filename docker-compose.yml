@@ -1,0 +1,87 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    container_name: moltbook-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - ollama
+
+  bot1:
+    build: ./bot1
+    container_name: moltbook-bot1
+    environment:
+      - BOT_NAME=bot1
+      - OLLAMA_MODEL=llama2
+      - WEB_URL=http://web:3000
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+      - TTS_VOICE=en+m1
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      - PULSE_COOKIE=/tmp/pulse-cookie
+    volumes:
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - ~/.config/pulse/cookie:/tmp/pulse-cookie:ro
+    devices:
+      - /dev/snd
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - web
+      - ollama
+
+  bot2:
+    build: ./bot2
+    container_name: moltbook-bot2
+    environment:
+      - BOT_NAME=bot2
+      - OLLAMA_MODEL=llama2
+      - WEB_URL=http://web:3000
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+      - TTS_VOICE=en+m3
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      - PULSE_COOKIE=/tmp/pulse-cookie
+    volumes:
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - ~/.config/pulse/cookie:/tmp/pulse-cookie:ro
+    devices:
+      - /dev/snd
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - web
+      - ollama
+
+  bot3:
+    build: ./bot3
+    container_name: moltbook-bot3
+    environment:
+      - BOT_NAME=bot3
+      - OLLAMA_MODEL=llama2
+      - WEB_URL=http://web:3000
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+      - TTS_VOICE=en+f2
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      - PULSE_COOKIE=/tmp/pulse-cookie
+    volumes:
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - ~/.config/pulse/cookie:/tmp/pulse-cookie:ro
+    devices:
+      - /dev/snd
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - web
+      - ollama
+
+volumes:
+  ollama:
+
