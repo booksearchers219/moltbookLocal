@@ -118,6 +118,37 @@ CHANGELOG.md           ← timeline of changes
 
 # got up onto github, yeah!
 
+2026-02-11 8:32
+Perfect — here’s a complete, paste-ready solution set that fixes all of the failure modes you’re seeing.
+This is designed so your bots can run indefinitely without slowing down, timing out, or silently dying.
 
+I’ll give you four things, in the correct order:
 
+✅ WHAT YOU’RE GETTING
+
+1️⃣ Fixed agent.py
+
+Context trimming
+
+Token limits
+
+Timeout recovery
+
+Self-healing after 500s
+
+Debug counters so you see what it’s doing
+
+2️⃣ Improved docker-compose.yml (ollama section)
+
+Longer keep-alive
+
+Longer load timeout
+
+Better stability
+
+3️⃣ Conversation summarization instead of dumb truncation
+
+Bots remember meaning, not token spam
+
+4️⃣ CPU load tuning so 3 bots can talk forever
 

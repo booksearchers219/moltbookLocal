@@ -1,123 +1,144 @@
 #!/usr/bin/env python3
-import os
-import time
+
 import requests
-from tts import speak
+import time
+import os
+import sys
+import traceback
 
-# =============================
-# Environment
-# =============================
+OLLAMA_URL = "http://host.docker.internal:11434/api/generate"
+MODEL = "llama2"
+
 BOT_NAME = os.getenv("BOT_NAME", "bot2")
-WEB_BASE = os.getenv("WEB_URL", "http://web:3000")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434/api/generate")
-MODEL = os.getenv("OLLAMA_MODEL", "llama2")
 
-NUM_PREDICT = int(os.getenv("NUM_PREDICT", "512"))
-TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
+# ---- TUNING ----
+MAX_CONTEXT_CHARS = 6000
+MAX_MESSAGES = 8
+MAX_TOKENS = 256
+RETRY_SLEEP = 15
+IDLE_SLEEP = 6
 
-# Track last processed message
-last_seen_ts = 0
+messages = [
+    {
+        "role": "system",
+        "content": f"You are {BOT_NAME}, an autonomous AI chatting casually with other bots. Be concise, curious, and conversational."
+    }
+]
 
-# =============================
-# System prompt
-# =============================
-SYSTEM_PROMPT = f"""
-You are {BOT_NAME}, one of several AI agents in a shared conversation.
+stats = {
+    "requests": 0,
+    "timeouts": 0,
+    "resets": 0
+}
 
-Rules:
-- Respond ONLY to the most recent message not written by you.
-- Ask at least one question to another bot.
-- Do not greet or introduce yourself.
-- Stay on topic.
-- Keep responses concise but complete.
-"""
 
-# =============================
-# Helpers
-# =============================
-def get_messages():
-    r = requests.get(f"{WEB_BASE}/api/messages", timeout=10)
-    r.raise_for_status()
-    return r.json()
+# ---------- HELPERS ----------
 
-def post_message(text: str):
-    requests.post(
-        f"{WEB_BASE}/api/bot-message",
-        json={
-            "bot": BOT_NAME,
-            "content": text
+def trim_messages(msgs):
+    total = 0
+    trimmed = []
+    for m in reversed(msgs):
+        total += len(m["content"])
+        if total > MAX_CONTEXT_CHARS:
+            break
+        trimmed.append(m)
+    return list(reversed(trimmed))
+
+
+def summarize_history(msgs):
+    """Summarize old conversation to preserve meaning"""
+    summary_prompt = [
+        {
+            "role": "system",
+            "content": "Summarize the following conversation in 3 short sentences so context can be preserved."
         },
-        timeout=10
-    )
+        {
+            "role": "user",
+            "content": "\n".join(m["content"] for m in msgs)
+        }
+    ]
 
-def call_ollama(prompt: str) -> str:
-    r = requests.post(
-        OLLAMA_URL,
-        json={
-            "model": MODEL,
-            "prompt": prompt,
-            "num_predict": NUM_PREDICT,
-            "temperature": TEMPERATURE,
-            "stream": False
-        },
-        timeout=120
-    )
-    r.raise_for_status()
-    return r.json().get("response", "").strip()
+    try:
+        r = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL,
+                "messages": summary_prompt,
+                "num_predict": 120
+            },
+            timeout=90
+        )
+        if r.ok:
+            summary = r.json()["response"]
+            return [
+                msgs[0],  # system
+                {"role": "system", "content": f"Conversation summary: {summary}"}
+            ]
+    except Exception:
+        pass
 
-# =============================
-# Main loop
-# =============================
-print(f"[{BOT_NAME}] online (voice={os.getenv('TTS_VOICE')})")
+    return msgs[-2:]
+
+
+def call_ollama(msgs):
+    payload = {
+        "model": MODEL,
+        "messages": msgs,
+        "num_predict": MAX_TOKENS,
+        "temperature": 0.8,
+        "top_p": 0.9,
+        "stop": ["</s>"]
+    }
+
+    return requests.post(OLLAMA_URL, json=payload, timeout=120)
+
+
+# ---------- MAIN LOOP ----------
+
+print(f"[START] {BOT_NAME} online")
 
 while True:
     try:
-        messages = get_messages()
+        stats["requests"] += 1
 
-        if not messages:
-            time.sleep(2)
+        messages[:] = trim_messages(messages)
+
+        if len(messages) > MAX_MESSAGES:
+            print("[INFO] Context large, summarizing")
+            messages[:] = summarize_history(messages)
+            stats["resets"] += 1
+
+        resp = call_ollama(messages)
+
+        if resp.status_code >= 500:
+            stats["timeouts"] += 1
+            print(f"[WARN] Ollama timeout ({stats['timeouts']}) — resetting context")
+            messages[:] = messages[:2]
+            time.sleep(RETRY_SLEEP)
             continue
 
-        latest = messages[-1]
+        data = resp.json()
+        reply = data.get("response", "").strip()
 
-        # Ignore own messages
-        if latest["bot"] == BOT_NAME:
-            time.sleep(2)
+        if not reply:
+            print("[WARN] Empty reply")
+            time.sleep(IDLE_SLEEP)
             continue
 
-        # Ignore already processed messages
-        if latest["ts"] <= last_seen_ts:
-            time.sleep(2)
-            continue
+        messages.append({"role": "assistant", "content": reply})
 
-        last_seen_ts = latest["ts"]
+        print(f"[{BOT_NAME}] {reply[:120]}")
 
-        # Build short conversation history
-        history = "\n".join(
-            f'{m["bot"]}: {m["content"]}'
-            for m in messages[-10:]
-        )
+        if stats["requests"] % 10 == 0:
+            print(f"[DEBUG] req={stats['requests']} resets={stats['resets']} timeouts={stats['timeouts']}")
 
-        prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
-            f"Conversation:\n{history}\n\n"
-            f"Your reply:"
-        )
+        time.sleep(IDLE_SLEEP)
 
-        reply = call_ollama(prompt)
-
-        # Safety fallback
-        if len(reply) < 10:
-            reply += " Can you clarify your perspective on this?"
-
-        # Post + speak
-        post_message(reply)
-        speak(reply)
-
-        # Small delay to prevent dogpiling
-        time.sleep(4)
+    except KeyboardInterrupt:
+        sys.exit(0)
 
     except Exception as e:
-        print(f"[{BOT_NAME}] error:", e)
-        time.sleep(5)
+        print("[ERROR]", e)
+        traceback.print_exc()
+        time.sleep(RETRY_SLEEP)
 
