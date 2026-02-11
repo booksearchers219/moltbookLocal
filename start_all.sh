@@ -1,62 +1,55 @@
 #!/usr/bin/env bash
-
 set -e
 
-BASE="$HOME/moltbook-local"
+BASE_DIR="$HOME/moltbook-local"
+WEB_DIR="$BASE_DIR/web"
+BOTS_DIR="$BASE_DIR/bots"
 
 echo "🚀 Starting Moltbook Local (single terminal logs)"
-echo ""
+echo
 
-PIDS=()
-
-prefix () {
-  local tag="$1"
-  sed -u "s/^/[$tag] /"
+cleanup() {
+  echo
+  echo "🛑 Shutting down Moltbook..."
+  pkill -f agent.py || true
+  pkill -f server.js || true
+  exit 0
 }
+trap cleanup SIGINT SIGTERM
 
-# --- Start web server ---
-echo "🌐 Starting web server..."
-cd "$BASE/web"
-node server.cjs 2>&1 | prefix WEB &
-PIDS+=($!)
+# --- Ollama ---
+if ! pgrep -x ollama >/dev/null; then
+  echo "🧠 Starting Ollama..."
+  ollama serve > >(sed 's/^/[OLLAMA] /') 2>&1 &
+  sleep 2
+else
+  echo "🧠 Ollama already running"
+fi
 
-sleep 2
+# --- Web server ---
+echo "🌐 Starting web server (server.js)..."
+cd "$WEB_DIR"
+node server.js > >(sed 's/^/[WEB] /') 2>&1 &
+sleep 1
 
-# --- Start bots ---
+# --- Bots ---
 start_bot () {
-  local name="$1"
-  echo "🤖 Starting $name..."
-  cd "$BASE/bots/$name"
-  BOT_NAME="$name" python3 agent.py 2>&1 | prefix "$name" &
-  PIDS+=($!)
+  local BOT_NAME="$1"
+  echo "🤖 Starting $BOT_NAME..."
+  cd "$BOTS_DIR/$BOT_NAME"
+  BOT_NAME="$BOT_NAME" python3 agent.py \
+    > >(sed "s/^/[$BOT_NAME] /") 2>&1 &
 }
 
 start_bot bot1
 start_bot bot2
 start_bot bot3
 
-# --- Open browser ---
-sleep 1
-xdg-open http://localhost:3000 >/dev/null 2>&1 || true
-
-echo ""
+echo
 echo "✅ Moltbook is running"
 echo "   Web: http://localhost:3000"
 echo "🛑 Press Ctrl+C to stop everything"
-echo ""
+echo
 
-# --- Cleanup on Ctrl+C ---
-cleanup () {
-  echo ""
-  echo "🧹 Shutting down..."
-  for pid in "${PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
-  done
-  exit 0
-}
-
-trap cleanup INT TERM
-
-# Keep alive
 wait
 

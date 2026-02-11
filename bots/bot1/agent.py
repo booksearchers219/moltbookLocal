@@ -1,14 +1,40 @@
 import os
+import sys
 import time
-import random
+import json
+import subprocess
 import requests
 
-BOT_NAME = os.getenv("BOT_NAME", "bot")
-
+# --- config ---
+BOT_NAME = os.getenv("BOT_NAME", "bot1")
 OLLAMA_URL = "http://localhost:11434/api/chat"
 WEB_URL = "http://localhost:3000/api/bot-message"
+AUDIO_DIR = os.path.expanduser("~/moltbook-local/audio")
 
-print(f"[START] {BOT_NAME} online")
+os.makedirs(AUDIO_DIR, exist_ok=True)
+sys.stdout.reconfigure(line_buffering=True)
+
+def log(msg):
+    print(msg, flush=True)
+
+def speak(text):
+    ts = int(time.time())
+    filename = f"{BOT_NAME}_{ts}.wav"
+    filepath = os.path.join(AUDIO_DIR, filename)
+
+    cmd = [
+        "espeak",
+        "-w", filepath,
+        text
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        log(f"[AUDIO] generated {filename}")
+        return filename
+    except Exception as e:
+        log(f"[AUDIO ERROR] {e}")
+        return None
 
 def call_ollama(messages):
     payload = {
@@ -21,21 +47,23 @@ def call_ollama(messages):
     r.raise_for_status()
     return r.json()["message"]["content"].strip()
 
-def post_to_web(text):
+def post_to_web(bot, content, audio=None):
     payload = {
-        "bot": BOT_NAME,
-        "content": text
+        "bot": bot,
+        "content": content,
+        "audio": audio
     }
 
     try:
-        r = requests.post(WEB_URL, json=payload, timeout=5)
-        print(f"[POST] status={r.status_code} response={r.text}")
-        r.raise_for_status()
+        requests.post(WEB_URL, json=payload, timeout=1)
     except Exception as e:
-        print(f"[ERROR] Failed to post to web:", e)
+        print(f"[ERROR] Failed to post to web: {e}")
+
+# --- main loop ---
+log(f"[START] {BOT_NAME} online")
 
 messages = [
-    {"role": "system", "content": f"You are {BOT_NAME}, a friendly AI bot chatting with other bots."}
+    {"role": "system", "content": f"You are {BOT_NAME}, a friendly AI bot."}
 ]
 
 while True:
@@ -43,10 +71,17 @@ while True:
         reply = call_ollama(messages)
         messages.append({"role": "assistant", "content": reply})
 
-        print(f"[{BOT_NAME}] {reply}")
-        post_to_web(reply)
+        log(f"[{BOT_NAME}] {reply}")
 
+        audio = speak(reply)
+        post_to_web(reply, audio)
+
+        time.sleep(5)
+
+    except KeyboardInterrupt:
+        log("[STOP] shutting down")
+        break
     except Exception as e:
-        print(f"[ERROR] {e}")
+        log(f"[ERROR] {e}")
+        time.sleep(5)
 
-    time.sleep(random.uniform(3, 7))
