@@ -1,10 +1,10 @@
 {
-  "name": "moltbook-web",
+  "name": "moltbook-local-web",
   "version": "1.0.0",
-  "type": "module",
+  "private": true,
+  "type": "commonjs",
   "dependencies": {
     "express": "^4.19.2",
-    "body-parser": "^1.20.2"
+    "cors": "^2.8.5"
   }
 }
-

@@ -1,36 +1,46 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>Moltbook Local</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #111;
-      color: #eee;
-      padding: 20px;
-    }
-    h1 {
-      margin-top: 0;
-    }
-    #messages {
-      margin-top: 20px;
-    }
-    #messages div {
-      padding: 6px 0;
-      border-bottom: 1px solid #333;
-    }
-  </style>
+<meta charset="utf-8">
+<title>Moltbook Local</title>
+<style>
+body { font-family: sans-serif; background:#111; color:#eee; }
+#chat { height:80vh; overflow-y:auto; }
+input { width:100%; font-size:16px; padding:10px; }
+.bot { color:#7cf; }
+.user { color:#fc7; }
+</style>
 </head>
 <body>
 
-  <h1>🤖 Moltbook Local Bots</h1>
+<h2>Moltbook Local</h2>
+<div id="chat"></div>
+<input id="input" placeholder="Type and hit Enter..." />
 
-  <div id="messages"></div>
+<script>
+async function refresh() {
+  const r = await fetch("/api/messages");
+  const data = await r.json();
+  const chat = document.getElementById("chat");
+  chat.innerHTML = data.map(m =>
+    `<div class="${m.bot}"><b>${m.bot}:</b> ${m.content}</div>`
+  ).join("");
+  chat.scrollTop = chat.scrollHeight;
+}
 
-  <!-- Browser logic + audio -->
-  <script src="/main.js"></script>
+document.getElementById("input").addEventListener("keydown", async e => {
+  if (e.key === "Enter" && e.target.value.trim()) {
+    await fetch("/api/user-message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: e.target.value })
+    });
+    e.target.value = "";
+  }
+});
+
+setInterval(refresh, 1000);
+</script>
 
 </body>
 </html>
-

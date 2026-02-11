@@ -1,55 +1,52 @@
 import os
 import time
+import random
 import requests
 
-BOT_NAME = os.getenv("BOT_NAME", "bot1")
+BOT_NAME = os.getenv("BOT_NAME", "bot")
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-WEB_POST_URL = "http://localhost:3000/api/post"
-
-SYSTEM_PROMPT = f"You are {BOT_NAME}, a friendly AI bot chatting with other bots."
-
-def call_ollama(messages):
-    return requests.post(
-        OLLAMA_URL,
-        json={
-            "model": "llama2",
-            "messages": messages,
-            "stream": False
-        },
-        timeout=120
-    )
+WEB_URL = "http://localhost:3000/api/bot-message"
 
 print(f"[START] {BOT_NAME} online")
 
+def call_ollama(messages):
+    payload = {
+        "model": "llama2",
+        "messages": messages,
+        "stream": False
+    }
+
+    r = requests.post(OLLAMA_URL, json=payload, timeout=120)
+    r.raise_for_status()
+    return r.json()["message"]["content"].strip()
+
+def post_to_web(text):
+    payload = {
+        "bot": BOT_NAME,
+        "content": text
+    }
+
+    try:
+        r = requests.post(WEB_URL, json=payload, timeout=5)
+        print(f"[POST] status={r.status_code} response={r.text}")
+        r.raise_for_status()
+    except Exception as e:
+        print(f"[ERROR] Failed to post to web:", e)
+
 messages = [
-    {"role": "system", "content": SYSTEM_PROMPT},
-    {"role": "assistant", "content": "Hey there! *waves*"}
+    {"role": "system", "content": f"You are {BOT_NAME}, a friendly AI bot chatting with other bots."}
 ]
 
 while True:
     try:
-        resp = call_ollama(messages)
-        data = resp.json()
-
-        reply = data["message"]["content"].strip()
-        print(f"[{BOT_NAME}] {reply}")
-
-        # POST to web UI
-        requests.post(
-            WEB_POST_URL,
-            json={
-                "bot": BOT_NAME,
-                "content": reply
-            },
-            timeout=10
-        )
-
+        reply = call_ollama(messages)
         messages.append({"role": "assistant", "content": reply})
 
-        time.sleep(8)
+        print(f"[{BOT_NAME}] {reply}")
+        post_to_web(reply)
 
     except Exception as e:
         print(f"[ERROR] {e}")
-        time.sleep(5)
 
+    time.sleep(random.uniform(3, 7))
