@@ -6,139 +6,88 @@ import os
 import sys
 import traceback
 
-OLLAMA_URL = "http://host.docker.internal:11434/api/generate"
+OLLAMA_URL = "http://host.docker.internal:11434/api/chat"
+WEB_URL = "http://moltbook-web:3000/api/bot-message"
 MODEL = "llama2"
 
 BOT_NAME = os.getenv("BOT_NAME", "bot1")
-
-# ---- TUNING ----
-MAX_CONTEXT_CHARS = 6000
-MAX_MESSAGES = 8
-MAX_TOKENS = 256
-RETRY_SLEEP = 15
 IDLE_SLEEP = 6
 
 messages = [
     {
         "role": "system",
-        "content": f"You are {BOT_NAME}, an autonomous AI chatting casually with other bots. Be concise, curious, and conversational."
+        "content": (
+            f"You are {BOT_NAME}, an autonomous AI bot. "
+            "You casually chat with other bots."
+        )
+    },
+    {
+        "role": "user",
+        "content": "Start the conversation with an interesting question."
     }
 ]
 
-stats = {
-    "requests": 0,
-    "timeouts": 0,
-    "resets": 0
-}
-
-
-# ---------- HELPERS ----------
-
-def trim_messages(msgs):
-    total = 0
-    trimmed = []
-    for m in reversed(msgs):
-        total += len(m["content"])
-        if total > MAX_CONTEXT_CHARS:
-            break
-        trimmed.append(m)
-    return list(reversed(trimmed))
-
-
-def summarize_history(msgs):
-    """Summarize old conversation to preserve meaning"""
-    summary_prompt = [
-        {
-            "role": "system",
-            "content": "Summarize the following conversation in 3 short sentences so context can be preserved."
-        },
-        {
-            "role": "user",
-            "content": "\n".join(m["content"] for m in msgs)
-        }
-    ]
-
-    try:
-        r = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": MODEL,
-                "messages": summary_prompt,
-                "num_predict": 120
-            },
-            timeout=90
-        )
-        if r.ok:
-            summary = r.json()["response"]
-            return [
-                msgs[0],  # system
-                {"role": "system", "content": f"Conversation summary: {summary}"}
-            ]
-    except Exception:
-        pass
-
-    return msgs[-2:]
-
 
 def call_ollama(msgs):
-    payload = {
-        "model": MODEL,
-        "messages": msgs,
-        "num_predict": MAX_TOKENS,
-        "temperature": 0.8,
-        "top_p": 0.9,
-        "stop": ["</s>"]
-    }
+    return requests.post(
+        OLLAMA_URL,
+        json={
+            "model": MODEL,
+            "messages": msgs,
+            "stream": False,
+            "options": {
+                "num_predict": 256,
+                "temperature": 0.8,
+                "top_p": 0.9
+            }
+        },
+        timeout=180
+    )
 
-    return requests.post(OLLAMA_URL, json=payload, timeout=120)
 
+def post_to_web(bot, text):
+    try:
+        requests.post(
+            WEB_URL,
+            json={
+                "bot": bot,
+                "role": "assistant",
+                "content": text
+            },
+            timeout=5
+        )
+    except Exception as e:
+        print(f"[WARN] Failed to post to web: {e}")
 
-# ---------- MAIN LOOP ----------
 
 print(f"[START] {BOT_NAME} online")
+sys.stdout.flush()
 
 while True:
     try:
-        stats["requests"] += 1
-
-        messages[:] = trim_messages(messages)
-
-        if len(messages) > MAX_MESSAGES:
-            print("[INFO] Context large, summarizing")
-            messages[:] = summarize_history(messages)
-            stats["resets"] += 1
-
         resp = call_ollama(messages)
+        resp.raise_for_status()
 
-        if resp.status_code >= 500:
-            stats["timeouts"] += 1
-            print(f"[WARN] Ollama timeout ({stats['timeouts']}) — resetting context")
-            messages[:] = messages[:2]
-            time.sleep(RETRY_SLEEP)
-            continue
+        reply = resp.json()["message"]["content"].strip()
 
-        data = resp.json()
-        reply = data.get("response", "").strip()
+        # Console output
+        print(f"[{BOT_NAME}] {reply}")
+        sys.stdout.flush()
 
-        if not reply:
-            print("[WARN] Empty reply")
-            time.sleep(IDLE_SLEEP)
-            continue
+        # 🔥 SEND TO WEB UI
+        post_to_web(BOT_NAME, reply)
 
         messages.append({"role": "assistant", "content": reply})
-
-        print(f"[{BOT_NAME}] {reply[:120]}")
-
-        if stats["requests"] % 10 == 0:
-            print(f"[DEBUG] req={stats['requests']} resets={stats['resets']} timeouts={stats['timeouts']}")
+        messages.append({
+            "role": "user",
+            "content": "Reply naturally and continue."
+        })
 
         time.sleep(IDLE_SLEEP)
 
     except KeyboardInterrupt:
         sys.exit(0)
-
-    except Exception as e:
-        print("[ERROR]", e)
+    except Exception:
         traceback.print_exc()
-        time.sleep(RETRY_SLEEP)
+        time.sleep(10)
 
