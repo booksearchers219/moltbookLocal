@@ -1,136 +1,120 @@
 import os
-import sys
 import time
-import json
+import requests
 import random
 import subprocess
-import requests
+from datetime import datetime
 
-# --- config ---
-BOT_NAME = os.getenv("BOT_NAME", "bot1")
-MODEL = "llama2"
+BOT_NAME = os.getenv("BOT_NAME", "bot")
+
 OLLAMA_URL = "http://localhost:11434/api/chat"
 WEB_URL = "http://localhost:3000/api/bot-message"
-AUDIO_DIR = os.path.expanduser("~/moltbook-local/audio")
+
+AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../audio"))
 
 os.makedirs(AUDIO_DIR, exist_ok=True)
-sys.stdout.reconfigure(line_buffering=True)
 
-def log(msg):
-    print(msg, flush=True)
+print(f"[START] {BOT_NAME} online")
 
-# --- Safe Ollama Call ---
-def call_ollama(messages, retries=2):
-    payload = {
-        "model": MODEL,
-        "messages": messages,
-        "stream": False,
-        "options": {
-            "temperature": 0.7,
-            "num_ctx": 2048
-        }
-    }
 
-    for attempt in range(retries + 1):
+# -----------------------------
+# OLLAMA CALL (HARDENED)
+# -----------------------------
+def get_response(prompt):
+    for attempt in range(2):  # retry once
         try:
             r = requests.post(
                 OLLAMA_URL,
-                json=payload,
-                timeout=300
+                json={
+                    "model": "llama2",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "options": {
+                        "num_ctx": 2048,
+                        "num_predict": 150
+                    }
+                },
+                timeout=120
             )
-            r.raise_for_status()
-            data = r.json()
-            return data["message"]["content"].strip()
 
-        except requests.exceptions.Timeout:
-            log(f"[WARN] Ollama timeout (attempt {attempt+1})")
+            data = r.json()
+            content = data.get("message", {}).get("content", "").strip()
+
+            if content:
+                return content
+
+            print(f"[{BOT_NAME}] [WARN] Empty response (attempt {attempt+1})")
 
         except Exception as e:
-            log(f"[WARN] Ollama error: {e}")
+            print(f"[{BOT_NAME}] [ERROR] Ollama failed: {e}")
 
-        if attempt < retries:
-            sleep_time = 10 + random.randint(0, 5)
-            log(f"[BACKOFF] Sleeping {sleep_time}s")
-            time.sleep(sleep_time)
+        time.sleep(2)
 
-    log("[ERROR] Ollama failed after retries.")
-    return ""
+    return None
 
-# --- Audio ---
-def speak(text):
-    if not text:
+
+# -----------------------------
+# AUDIO GENERATION
+# -----------------------------
+def generate_audio(text):
+    if not text.strip():
         return None
 
-    ts = int(time.time())
-    filename = f"{BOT_NAME}_{ts}.wav"
+    filename = f"{BOT_NAME}_{int(time.time())}.wav"
     filepath = os.path.join(AUDIO_DIR, filename)
 
-    cmd = ["espeak", "-w", filepath, text]
-
     try:
-        subprocess.run(cmd, check=True)
-        log(f"[AUDIO] generated {filename}")
+        subprocess.run(
+            ["espeak", "-w", filepath, text],
+            check=True
+        )
+        print(f"[{BOT_NAME}] [AUDIO] generated {filename}")
         return filename
     except Exception as e:
-        log(f"[AUDIO ERROR] {e}")
+        print(f"[{BOT_NAME}] [ERROR] Audio generation failed: {e}")
         return None
 
-# --- Send to Web ---
-def post_to_web(text, audio_file):
-    payload = {
-        "bot": BOT_NAME,
-        "content": text,
-        "audio": audio_file
-    }
 
+# -----------------------------
+# POST TO WEB
+# -----------------------------
+def post_to_web(text, wav_filename):
     try:
-        requests.post(WEB_URL, json=payload, timeout=10)
+        requests.post(
+            WEB_URL,
+            json={
+                "bot": BOT_NAME,
+                "content": text,
+                "audio": wav_filename
+            },
+            timeout=10
+        )
+        print(f"[{BOT_NAME}] [POSTED]")
     except Exception as e:
-        log(f"[WEB ERROR] {e}")
+        print(f"[{BOT_NAME}] [ERROR] Failed to post: {e}")
 
-# --- main loop ---
-log(f"[START] {BOT_NAME} online")
 
-messages = [
-    {"role": "system", "content": f"You are {BOT_NAME}, a friendly AI bot."}
-]
-
-MAX_HISTORY = 6  # prevents runaway memory/context growth
-
+# -----------------------------
+# MAIN LOOP
+# -----------------------------
 while True:
-    try:
-        reply = call_ollama(messages)
+    prompt = "Say something friendly and conversational."
 
-        if not reply:
-            log("[SKIP] Empty reply, cooling down.")
-            time.sleep(8)
-            continue
+    response = get_response(prompt)
 
-        messages.append({"role": "assistant", "content": reply})
+    if not response:
+        print(f"[{BOT_NAME}] [SKIP] No valid response")
+        time.sleep(5)
+        continue
 
-        # --- Trim history ---
-        if len(messages) > MAX_HISTORY:
-            messages = [messages[0]] + messages[-(MAX_HISTORY-1):]
+    print(f"[{BOT_NAME}] {response}")
 
-        log(f"[{BOT_NAME}] {reply}")
+    wav = generate_audio(response)
 
-        audio = speak(reply)
-        post_to_web(reply, audio)
+    if wav:
+        post_to_web(response, wav)
 
-        # --- Stagger sleep to prevent collisions ---
-        sleep_time = random.randint(6, 12)
-        log(f"[SLEEP] {sleep_time}s")
-        time.sleep(sleep_time)
-
-    except KeyboardInterrupt:
-        log("[STOP] shutting down")
-        break
-
-    except requests.exceptions.Timeout:
-        log("[WARN] Timeout — backing off 15s")
-        time.sleep(15)
-
-    except Exception as e:
-        log(f"[ERROR] {e}")
-        time.sleep(10)
+    sleep_time = random.randint(6, 12)
+    print(f"[{BOT_NAME}] [SLEEP] {sleep_time}s")
+    time.sleep(sleep_time)
 

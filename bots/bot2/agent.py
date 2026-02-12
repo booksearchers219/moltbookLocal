@@ -1,87 +1,120 @@
 import os
-import sys
 import time
-import json
-import subprocess
 import requests
+import random
+import subprocess
+from datetime import datetime
 
-# --- config ---
-BOT_NAME = os.getenv("BOT_NAME", "bot1")
+BOT_NAME = os.getenv("BOT_NAME", "bot")
+
 OLLAMA_URL = "http://localhost:11434/api/chat"
 WEB_URL = "http://localhost:3000/api/bot-message"
-AUDIO_DIR = os.path.expanduser("~/moltbook-local/audio")
+
+AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../audio"))
 
 os.makedirs(AUDIO_DIR, exist_ok=True)
-sys.stdout.reconfigure(line_buffering=True)
 
-def log(msg):
-    print(msg, flush=True)
+print(f"[START] {BOT_NAME} online")
 
-def speak(text):
-    ts = int(time.time())
-    filename = f"{BOT_NAME}_{ts}.wav"
-    filepath = os.path.join(AUDIO_DIR, filename)
 
-    cmd = [
-        "espeak",
-        "-w", filepath,
-        text
-    ]
+# -----------------------------
+# OLLAMA CALL (HARDENED)
+# -----------------------------
+def get_response(prompt):
+    for attempt in range(2):  # retry once
+        try:
+            r = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model": "llama2",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "options": {
+                        "num_ctx": 2048,
+                        "num_predict": 150
+                    }
+                },
+                timeout=120
+            )
 
-    try:
-        subprocess.run(cmd, check=True)
-        log(f"[AUDIO] generated {filename}")
-        return filename
-    except Exception as e:
-        log(f"[AUDIO ERROR] {e}")
+            data = r.json()
+            content = data.get("message", {}).get("content", "").strip()
+
+            if content:
+                return content
+
+            print(f"[{BOT_NAME}] [WARN] Empty response (attempt {attempt+1})")
+
+        except Exception as e:
+            print(f"[{BOT_NAME}] [ERROR] Ollama failed: {e}")
+
+        time.sleep(2)
+
+    return None
+
+
+# -----------------------------
+# AUDIO GENERATION
+# -----------------------------
+def generate_audio(text):
+    if not text.strip():
         return None
 
-def call_ollama(messages):
-    payload = {
-        "model": "llama2",
-        "messages": messages,
-        "stream": False
-    }
-
-    r = requests.post(OLLAMA_URL, json=payload, timeout=120)
-    r.raise_for_status()
-    return r.json()["message"]["content"].strip()
-
-def post_to_web(text, audio_file):
-    payload = {
-        "bot": BOT_NAME,
-        "content": text,
-        "audio": audio_file
-    }
+    filename = f"{BOT_NAME}_{int(time.time())}.wav"
+    filepath = os.path.join(AUDIO_DIR, filename)
 
     try:
-        requests.post(WEB_URL, json=payload, timeout=5)
+        subprocess.run(
+            ["espeak", "-w", filepath, text],
+            check=True
+        )
+        print(f"[{BOT_NAME}] [AUDIO] generated {filename}")
+        return filename
     except Exception as e:
-        log(f"[WEB ERROR] {e}")
+        print(f"[{BOT_NAME}] [ERROR] Audio generation failed: {e}")
+        return None
 
-# --- main loop ---
-log(f"[START] {BOT_NAME} online")
 
-messages = [
-    {"role": "system", "content": f"You are {BOT_NAME}, a friendly AI bot."}
-]
+# -----------------------------
+# POST TO WEB
+# -----------------------------
+def post_to_web(text, wav_filename):
+    try:
+        requests.post(
+            WEB_URL,
+            json={
+                "bot": BOT_NAME,
+                "content": text,
+                "audio": wav_filename
+            },
+            timeout=10
+        )
+        print(f"[{BOT_NAME}] [POSTED]")
+    except Exception as e:
+        print(f"[{BOT_NAME}] [ERROR] Failed to post: {e}")
 
+
+# -----------------------------
+# MAIN LOOP
+# -----------------------------
 while True:
-    try:
-        reply = call_ollama(messages)
-        messages.append({"role": "assistant", "content": reply})
+    prompt = "Say something friendly and conversational."
 
-        log(f"[{BOT_NAME}] {reply}")
+    response = get_response(prompt)
 
-        audio = speak(reply)
-        post_to_web(reply, audio)
-
+    if not response:
+        print(f"[{BOT_NAME}] [SKIP] No valid response")
         time.sleep(5)
+        continue
 
-    except KeyboardInterrupt:
-        log("[STOP] shutting down")
-        break
-    except Exception as e:
-        log(f"[ERROR] {e}")
-        time.sleep(5)
+    print(f"[{BOT_NAME}] {response}")
+
+    wav = generate_audio(response)
+
+    if wav:
+        post_to_web(response, wav)
+
+    sleep_time = random.randint(6, 12)
+    print(f"[{BOT_NAME}] [SLEEP] {sleep_time}s")
+    time.sleep(sleep_time)
 
