@@ -2,119 +2,113 @@ import os
 import time
 import requests
 import random
-import subprocess
-from datetime import datetime
 
-BOT_NAME = os.getenv("BOT_NAME", "bot")
+# Optional TTS (delete next line if you don't want voice)
+from tts import speak
 
+BOT_NAME = os.getenv("BOT_NAME", "bot1")
 OLLAMA_URL = "http://localhost:11434/api/chat"
-WEB_URL = "http://localhost:3000/api/bot-message"
 
-AUDIO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../audio"))
+# ==============================
+# PERSONALITIES
+# ==============================
 
-os.makedirs(AUDIO_DIR, exist_ok=True)
+PERSONALITIES = {
+    "bot1": {
+        "system": """
+You are The Systems Architect.
+Think in structured frameworks.
+Expand ideas deeply.
+Do NOT introduce yourself.
+Break ideas into models or mechanisms.
+End with one structural question.
+""",
+        "temperature": 0.8
+    },
+    "bot2": {
+        "system": """
+You are The Skeptic.
+Challenge assumptions.
+Identify logical weaknesses.
+Never agree without critique.
+Push into uncomfortable territory.
+End with a difficult question.
+""",
+        "temperature": 0.95
+    },
+    "bot3": {
+        "system": """
+You are The Visionary.
+Use metaphors.
+Connect unrelated domains.
+Expand ideas in surprising directions.
+Do NOT introduce yourself.
+Push toward possibility.
+""",
+        "temperature": 1.1
+    }
+}
 
-print(f"[START] {BOT_NAME} online")
+PROFILE = PERSONALITIES.get(BOT_NAME.lower(), PERSONALITIES["bot1"])
+
+print(f"\n[START] {BOT_NAME} online\n")
+
+# Shared starting topic
+conversation = [
+    {"role": "user", "content": "Begin an evolving discussion about intelligence and how it emerges."}
+]
 
 
-# -----------------------------
-# OLLAMA CALL (HARDENED)
-# -----------------------------
-def get_response(prompt):
-    for attempt in range(2):  # retry once
-        try:
-            r = requests.post(
-                OLLAMA_URL,
-                json={
-                    "model": "llama2",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "stream": False,
-                    "options": {
-                        "num_ctx": 2048,
-                        "num_predict": 150
-                    }
-                },
-                timeout=120
-            )
-
-            data = r.json()
-            content = data.get("message", {}).get("content", "").strip()
-
-            if content:
-                return content
-
-            print(f"[{BOT_NAME}] [WARN] Empty response (attempt {attempt+1})")
-
-        except Exception as e:
-            print(f"[{BOT_NAME}] [ERROR] Ollama failed: {e}")
-
-        time.sleep(2)
-
-    return None
-
-
-# -----------------------------
-# AUDIO GENERATION
-# -----------------------------
-def generate_audio(text):
-    if not text.strip():
-        return None
-
-    filename = f"{BOT_NAME}_{int(time.time())}.wav"
-    filepath = os.path.join(AUDIO_DIR, filename)
-
+def get_response():
     try:
-        subprocess.run(
-            ["espeak", "-w", filepath, text],
-            check=True
-        )
-        print(f"[{BOT_NAME}] [AUDIO] generated {filename}")
-        return filename
-    except Exception as e:
-        print(f"[{BOT_NAME}] [ERROR] Audio generation failed: {e}")
-        return None
-
-
-# -----------------------------
-# POST TO WEB
-# -----------------------------
-def post_to_web(text, wav_filename):
-    try:
-        requests.post(
-            WEB_URL,
+        r = requests.post(
+            OLLAMA_URL,
             json={
-                "bot": BOT_NAME,
-                "content": text,
-                "audio": wav_filename
+                "model": "llama2",
+                "messages": [
+                    {"role": "system", "content": PROFILE["system"]},
+                    *conversation[-12:]
+                ],
+                "stream": False,
+                "options": {
+                    "temperature": PROFILE["temperature"],
+                    "num_ctx": 4096,
+                    "num_predict": 350
+                }
             },
-            timeout=10
+            timeout=120
         )
-        print(f"[{BOT_NAME}] [POSTED]")
+
+        data = r.json()
+        return data.get("message", {}).get("content", "").strip()
+
     except Exception as e:
-        print(f"[{BOT_NAME}] [ERROR] Failed to post: {e}")
+        print(f"[{BOT_NAME}] ERROR:", e)
+        return None
 
 
-# -----------------------------
-# MAIN LOOP
-# -----------------------------
 while True:
-    prompt = "Say something friendly and conversational."
 
-    response = get_response(prompt)
+    response = get_response()
 
     if not response:
-        print(f"[{BOT_NAME}] [SKIP] No valid response")
         time.sleep(5)
         continue
 
-    print(f"[{BOT_NAME}] {response}")
+    print(f"\n[{BOT_NAME.upper()}]")
+    print(response)
 
-    wav = generate_audio(response)
+    # Add to memory
+    conversation.append({
+        "role": "assistant",
+        "content": response
+    })
 
-    if wav:
-        post_to_web(response, wav)
+    # Optional voice
+    try:
+        speak(response)
+    except:
+        pass
 
-    sleep_time = random.randint(6, 12)
-    print(f"[{BOT_NAME}] [SLEEP] {sleep_time}s")
-    time.sleep(sleep_time)
+    time.sleep(random.randint(6, 12))
 
