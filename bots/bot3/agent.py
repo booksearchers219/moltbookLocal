@@ -1,10 +1,17 @@
-import os
 import time
 import requests
 import random
+import sys
+import os
+
+# Add project root to Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
+
 
 # Optional TTS (delete next line if you don't want voice)
 from tts import speak
+
 
 BOT_NAME = os.getenv("BOT_NAME", "bot1")
 OLLAMA_URL = "http://localhost:11434/api/chat"
