@@ -24,38 +24,37 @@ BOTS = [
         "name": "SystemsArchitect",
         "system": """
 You are The Systems Architect.
-Build structured models.
-Expand deeply.
-Do not introduce yourself.
-End with one structural question.
+Respond in 4-6 concise sentences.
+Build high-level conceptual models.
+Do NOT create numbered lists.
+Stay abstract and theoretical.
+End with one sharp structural question.
 """,
-        "temperature": 0.8
+        "temperature": 0.75
     },
     {
         "name": "Skeptic",
         "system": """
 You are The Skeptic.
-Challenge assumptions.
-Expose weaknesses.
-Never agree without critique.
-End with a difficult question.
+Respond in 3-5 tight sentences.
+Critique ideas conceptually.
+Avoid formal puzzles or enumerated structures.
+End with one difficult question.
 """,
-        "temperature": 0.95
+        "temperature": 0.9
     },
     {
         "name": "Visionary",
         "system": """
 You are The Visionary.
-Use metaphors.
-Connect unrelated domains.
-Expand ideas in surprising directions.
-Do not introduce yourself.
+Respond in 4-6 vivid sentences.
+Use one metaphor at most.
+Avoid rambling or rule-based constructions.
 """,
-        "temperature": 1.1
+        "temperature": 1.0
     }
 ]
 
-# Track consecutive failures per bot
 bot_failures = {bot["name"]: 0 for bot in BOTS}
 
 # -----------------------------
@@ -66,22 +65,76 @@ conversation = [
     {"role": "user", "content": "Begin an evolving discussion about intelligence and how it emerges."}
 ]
 
+theory_summary = ""
+
+# -----------------------------
+# FAILURE RESET
+# -----------------------------
+
+def reset_all_failures():
+    print("🔄 Resetting failure counters for all bots.\n")
+    for bot in bot_failures:
+        bot_failures[bot] = 0
+
+
+# -----------------------------
+# SUMMARIZER
+# -----------------------------
+
+def update_summary():
+    global theory_summary
+
+    if len(conversation) < 6:
+        return
+
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": "Summarize the evolving theory in 5 concise sentences."},
+            *conversation[-6:]
+        ],
+        "stream": False,
+        "options": {
+            "num_ctx": 1024,
+            "num_predict": 120
+        }
+    }
+
+    try:
+        r = requests.post(OLLAMA_URL, json=payload, timeout=30)
+        data = r.json()
+        summary = data.get("message", {}).get("content", "").strip()
+        if summary:
+            theory_summary = summary
+    except:
+        pass
+
+
 # -----------------------------
 # SAFE OLLAMA CALL
 # -----------------------------
 
 def call_bot(bot):
+    messages = [
+        {"role": "system", "content": bot["system"]}
+    ]
+
+    if theory_summary:
+        messages.append({
+            "role": "system",
+            "content": f"Current evolving theory summary:\n{theory_summary}"
+        })
+
+    messages.extend(conversation[-3:])
+
     payload = {
         "model": MODEL,
-        "messages": [
-            {"role": "system", "content": bot["system"]},
-            *conversation[-4:]
-        ],
+        "messages": messages,
         "stream": False,
         "options": {
             "temperature": bot["temperature"],
-            "num_ctx": 1024,
-            "num_predict": 80
+            "num_ctx": 2048,
+            "num_predict": 140
         }
     }
 
@@ -96,24 +149,21 @@ def call_bot(bot):
             )
 
             r.raise_for_status()
-
             data = r.json()
 
-            if not isinstance(data, dict):
-                print("⚠️ Invalid JSON structure.")
-                continue
-
             content = data.get("message", {}).get("content", "")
-
-            if not isinstance(content, str):
-                continue
-
             content = content.strip()
 
-            if not content:
-                continue
+            # -------------------------
+            # Silence detection
+            # -------------------------
+            if content and len(content) > 5:
+                if not content.endswith((".", "?", "!")):
+                    content += "..."
+                return content
 
-            return content
+            # Soft silence (not failure)
+            return "__SILENCE__"
 
         except requests.exceptions.Timeout:
             print("⚠️ Ollama timed out.")
@@ -138,9 +188,15 @@ turn = 0
 while True:
     bot = BOTS[turn % len(BOTS)]
 
-    # Skip bot if it's failing repeatedly
+    # Skip if bot exceeded failure threshold
     if bot_failures[bot["name"]] >= FAILURE_SKIP_THRESHOLD:
         print(f"⏭ Skipping {bot['name']} due to repeated failures.")
+
+        # If ALL bots are failing, reset
+        if all(f >= FAILURE_SKIP_THRESHOLD for f in bot_failures.values()):
+            reset_all_failures()
+            print("🧠 System stabilized. Continuing discussion.\n")
+
         turn += 1
         continue
 
@@ -148,6 +204,21 @@ while True:
 
     response = call_bot(bot)
 
+    # -------------------------
+    # Silence handling
+    # -------------------------
+    if response == "__SILENCE__":
+        print(f"⚠️ {bot['name']} returned silence. Nudging conversation.\n")
+        conversation.append({
+            "role": "assistant",
+            "content": "Continue the discussion from a new conceptual angle."
+        })
+        turn += 1
+        continue
+
+    # -------------------------
+    # True failure handling
+    # -------------------------
     if not response:
         bot_failures[bot["name"]] += 1
         print(f"⚠️ {bot['name']} failed ({bot_failures[bot['name']]} consecutive).")
@@ -155,7 +226,7 @@ while True:
         time.sleep(2)
         continue
 
-    # Reset failure counter on success
+    # Success
     bot_failures[bot["name"]] = 0
 
     print(f"\n[{bot['name']}]")
@@ -166,7 +237,8 @@ while True:
         "content": response
     })
 
-    # Safe TTS
+    update_summary()
+
     try:
         speak(response, bot["name"])
     except Exception as e:
