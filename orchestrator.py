@@ -61,9 +61,17 @@ bot_failures = {bot["name"]: 0 for bot in BOTS}
 # SHARED MEMORY
 # -----------------------------
 
-conversation = [
-    {"role": "user", "content": "Begin an evolving discussion about intelligence and how it emerges."}
-]
+# -----------------------------
+# OPTIONAL SEED INPUT
+# -----------------------------
+
+user_seed = input("\n📝 Enter a conversation seed (or press Enter to auto-start):\n> ").strip()
+
+if user_seed:
+    conversation = [{"role": "user", "content": user_seed}]
+else:
+    conversation = []
+
 
 theory_summary = ""
 
@@ -187,6 +195,14 @@ turn = 0
 
 while True:
     bot = BOTS[turn % len(BOTS)]
+
+    # Auto-start if no seed was provided
+    if not conversation and turn == 0:
+        conversation.append({
+            "role": "assistant",
+            "content": "Initiate a new evolving discussion about intelligence."
+        })
+
 
     # Skip if bot exceeded failure threshold
     if bot_failures[bot["name"]] >= FAILURE_SKIP_THRESHOLD:
