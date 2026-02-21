@@ -73,6 +73,14 @@ else:
     conversation = []
 
 
+# -----------------------------
+# AUDIO OPTION
+# -----------------------------
+
+audio_choice = input("\n🔊 Enable voice output? (Y/n):\n> ").strip().lower()
+AUDIO_ENABLED = audio_choice not in ["n", "no"]
+
+
 theory_summary = ""
 
 # -----------------------------
@@ -255,10 +263,11 @@ while True:
 
     update_summary()
 
-    try:
-        speak(response, bot["name"])
-    except Exception as e:
-        print("⚠️ TTS error:", e)
+    if AUDIO_ENABLED:
+        try:
+            speak(response, bot["name"])
+        except Exception as e:
+            print("⚠️ TTS error:", e)
 
     turn += 1
     time.sleep(random.randint(4, 8))
