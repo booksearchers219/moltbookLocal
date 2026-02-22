@@ -3,6 +3,7 @@ import requests
 import time
 import random
 from tts import speak
+from datetime import datetime
 
 # -----------------------------
 # CONFIG
@@ -14,6 +15,8 @@ MODEL = "phi"
 REQUEST_TIMEOUT = 60
 MAX_RETRIES = 2
 FAILURE_SKIP_THRESHOLD = 3
+
+LOG_FILE = f"conversation_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
 
 # -----------------------------
 # PERSONALITIES
@@ -91,6 +94,17 @@ def reset_all_failures():
     print("🔄 Resetting failure counters for all bots.\n")
     for bot in bot_failures:
         bot_failures[bot] = 0
+
+# -----------------------------
+# FILE LOGGER
+# -----------------------------
+
+def append_to_log(text):
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except Exception as e:
+        print("⚠️ Log write error:", e)
 
 
 # -----------------------------
@@ -199,6 +213,8 @@ def call_bot(bot):
 
 print("\n=== Multi-Agent Conversation Started ===\n")
 
+append_to_log("\n=== Multi-Agent Conversation Started ===\n")
+
 turn = 0
 
 while True:
@@ -246,6 +262,7 @@ while True:
     if not response:
         bot_failures[bot["name"]] += 1
         print(f"⚠️ {bot['name']} failed ({bot_failures[bot['name']]} consecutive).")
+        append_to_log(f"⚠️ {bot['name']} failed ({bot_failures[bot['name']]} consecutive).")
         turn += 1
         time.sleep(2)
         continue
@@ -255,6 +272,8 @@ while True:
 
     print(f"\n[{bot['name']}]")
     print(response)
+
+    append_to_log(f"\n[{bot['name']}]\n{response}\n")
 
     conversation.append({
         "role": "assistant",
