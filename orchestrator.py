@@ -4,6 +4,7 @@ import time
 import random
 from tts import speak
 from datetime import datetime
+import os
 
 # -----------------------------
 # CONFIG
@@ -16,7 +17,16 @@ REQUEST_TIMEOUT = 60
 MAX_RETRIES = 2
 FAILURE_SKIP_THRESHOLD = 3
 
-LOG_FILE = f"conversation_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+LOG_DIR = "logs"
+
+# Create logs directory if it doesn't exist
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
+LOG_FILE = os.path.join(
+    LOG_DIR,
+    f"conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+)
 
 # -----------------------------
 # PERSONALITIES
